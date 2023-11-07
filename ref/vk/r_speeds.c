@@ -165,6 +165,13 @@ static void drawTimeBar(uint64_t begin_time_ns, float time_scale_ms, int64_t beg
 	tmp[0] = '\0';
 	const int glyph_width = g_speeds.font_metrics.glyph_width;
 	Q_snprintf(tmp, Q_min(sizeof(tmp), width / glyph_width), "%s %.3fms", label, delta_ms);
+	// dirt: dump dt to .perf
+	FILE *dt_file = fopen("./dt_dump", "a");
+	if(dt_file == NULL)
+		printf("error: couldn't open dt_dump\n");
+	else
+		fprintf(dt_file, "%2.3f ", delta_ms);
+	fclose(dt_file);
 	gEngine.Con_DrawString(x, y, tmp, text_color);
 }
 
