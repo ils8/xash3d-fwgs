@@ -170,7 +170,7 @@ static void drawTimeBar(uint64_t begin_time_ns, float time_scale_ms, int64_t beg
 	if(dt_file == NULL)
 		printf("error: couldn't open dt_dump\n");
 	else
-		fprintf(dt_file, "%2.3f ", delta_ms);
+		fprintf(dt_file, "%.3f\n", delta_ms);
 	fclose(dt_file);
 	gEngine.Con_DrawString(x, y, tmp, text_color);
 }
