@@ -1,0 +1,29 @@
+#Design
+aprof declare begin / aprof end
+provod doesnt remember gpu profiler, ok... (vkcombuf)
+end-begin = dt
+scope = hande
+scope_name = name for profiler (not mandatory, as can be defined elsewhere)
+scope_id_t = int (order of reg)
+quake in 32kb!!! HYPE HYPE HYPE
+max_scopes 2^8
+time_t? clock_gettime(monotonic, ...) (time() is too slow???)
+a() 8ms {b()6ms {c()2ms}}} (very nice for stack, like the brackets open/close problem in K&R!)
+aprov_scope_event(scope id, int begin (bool) begin/end)
+events[1<<22] circular buffer (hello, linux io)
+what about the "catch up", the begin with end(the two pointers into the buffer)? does it overwrite? does it signal?
+event open/close and frame border (end/begin)
+scope_id (from prev to current to ram then to file as is; also add new scopes [dynamic scope creation, not inited but registered; got into funct = init, added to table events; remember prev frame scopes; in this time we got n new scopes and m events dump this to ram (scopes + frames + events)])
+js, lol
+approv_begin_dump/end(uint max_events, ){ estimate max 720 000 * 8 bytes of memory will be taken from you and never returned :evil: (leak all the mems) 8 Mbytes/min
+gpu you know nothing, john snow
+not only at the end, but also signalled dumping!
+
+#ANALisys
+gosha
+chrome://profile
+js canvas! yay Kappa
+
+gpu is unknown territory vk_framectl 
+id say better have modules (decentralise woot)
+before display more dump
