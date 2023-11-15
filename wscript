@@ -326,6 +326,10 @@ def configure(conf):
 
 			# disabled, flood
 			# '-Wdouble-promotion',
+
+            #dunno if this is gcc tho..., add dwarf and extra info (needed for macro expansion, as provod did some MAD ones in profiler.h)
+            '-g3',      # macro exp
+            '-gdwarf',  # in dwarf format
 		]
 
 		opt_cflags = [
