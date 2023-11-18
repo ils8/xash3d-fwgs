@@ -1,10 +1,49 @@
+# 2023-11-17 E332
+- [-] backside emissive water polygons:
+    - adding them makes things worse in other parts of the level
+- [x] water normalmap support -- added missing tangents
+- [x] discuss integration test strategies
+
+# 2023-11-16 E331
+- [x] Emissive waters
+    - [x] add emissive water surface to polygon lights
+    - [x] update emissive color for water surfaces
+- [x] trihash option
+- [x] dynamic UVs
+    - [x] update UVs for conveyors
+    - [ ] pls don't aggravate validation on changelevel -- cannot reproduce
+
+# 2023-11-14 E330
+- [x] culling worldmodel waters
+     - [-] try simple flag culling (probably won't work)
+     - [-] try detecting glpoly normals -> consistent with SURF_PLANEBACK, doesn't help
+     - [x] SURF_UNDERWATER seems to get us a SINLE surface looking outwards
+- [x] investigate gl backface culling for transparent surfaces:
+    - [ ] glass -- seems to have 2nd face (brush backside)
+    - [x] water -- doesn't seem to have 2nd face
+        - [x] glpoly_t winding order is reversed when camera origin is opposite to (SURF_PLANEBACK-aware) surface normal
+- [x] discuss culling transparent surfaces strategies
+
+# 2023-11-13 E329
+- [-] culling -> need to cull everything except opaque and blend. Alpha-mask is culled.
+- [-] waters:
+     - [-] No water surface visible from underneath -- hidden by enabling culling
+     - [-] No coplanar issues visible? -- hidden by culling. Disabling culling makes glitches reappear
+
+# 2023-11-10 E328
+- [ ] woditschka
+     - [-] potentially collinear planes vs ray tracing #264
+         - not super clear how exactly it works, and what it does. And how to cull things
+         - leaning towards making our own tesselator, as it might be universally usable for other things, e.g. detail mapping
+         - [ ] (A) try producing simple surfaces w/o tesselation, similar to regular brush surfaces
+         - [x] (C) print out all surfaces and polys to see where are they looking
+         - [-] (B) try filtering surfaces looking down
+
 # 2023-11-09 E327
 - [x] update animated textures is now super slow: some static map surfaces have alternate anims (e.g. light post on c2a5)
-- [ ] woditschka
+- [-] woditschka
      - [x] height not switching to negative underwater -- decided that we don't need it for now
      - [x] do not draw water sides when not requested.
-     - [ ] potentially collinear planes vs ray tracing #264
-
 
 # 2023-11-07 E326
 - [x] list supported arguments for `rt_debug_display_only` cvar

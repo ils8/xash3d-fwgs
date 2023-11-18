@@ -713,3 +713,187 @@ VK:
 - no PLANE_Z check: sphere=1 side=1
 
 EXPLANATION: `!=PLANE_Z` is only culled for non-worldmodel entities. Worldmodel doesn't cull by != PLANE_Z.
+
+# 2023-11-10 #E328
+MORE WATER
+- There are 2 msurface_t for water surfaces, one for each "orientation": front and back
+- The "back" one usually has SURF_PLANEBACK flag, and can be culled as such
+- For most of water bodies completely removing the SURF_PLANEBACK surface solves the coplanar glitches
+    - However, that breaks the trad rederer: can no longer see the water surface from underwater
+    - Also breaks the water spehere in test_brush2: its surfaces are not oriented properly and uniformly "outwards" vs "inwards"
+    - No amount of flag SURF_UNDERWATER/SURF_PLANEBACK culling produces consistent results
+
+What can be done:
+1. Leave it as-is, with double sided surfaces and all that. To fix ray tracing:
+    - Make it cull back-sided polygons
+    - Ensure that any reflections and refractions are delta-far-away enough to not be caught between imprecise coplanar planes.
+2. Do the culling later: at glpoly stage. Do not emit glpolys that are oriented in the opposite direction from the surface producing them.
+
+# 2023-11-13 E329
+## To cull or not to cull?
+- Original renderer culls backfacing triangles in general.
+- Culling leads to some visual glitches for RT:
+    - First person weapon models are designed to be visible only from the first person perspective.
+        - Culling leads to holes in shadows and reflections.
+        - [x] Can culling be specified per BLAS/geometry?
+            - `VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR` can disable culling for BLAS, regardless of ray flag
+    - Some alpha-tested geometries are not thin and have two faces: front and back.
+        - When culling: there are misaligned shadows that "start from nowhere", a few cm off the visible geometry.
+        - When not culling: there are geometry doubles, and shadow doubles, ladder backsides, etc.
+            - [ ] Can we do culling for alpha-tested geometries only?
+    - Leaking shadows in cs: https://github.com/w23/xash3d-fwgs/issues/507
+        - [-] Maybe shadow rays need front-face-culling instead? Or no culling?
+            - probably not: e.g. ladder back sides are broken.
+- Is there a performance penalty to cull for RT? (likely negligible)
+
+Extra considerations:
+- Medium boundaries.
+  Glass in HL also often comes as a non-thin brush box with all 6 sides.
+  Traditionally only the front-facing sided is not culled and rendered.
+  However, for proper "physical" ray tracing both boundaries between mediums are important.
+  - [ ] Not sure we want to get _that_ physical.
+  - [ ] Glass is rather thin anyway usually.
+  - [ ] What to do with water? The game suggests having two surfaces: front and back facing.
+
+## Water
+(see E326-E328 above)
+Water surfaces are generally visible to us as surfaces with `SURF_DRAWTURB*` flag.
+They come in pairs: front and back facing.
+
+All these surfaces have tesselation, and are updating their uvs (to draw "turbulence").
+
+Properties:
+- (potentially dynamic; known only at rendering time; only for non-worldmodel): waveHeight -- makes tesselated verts go up/down.
+- Transparency
+    - Opaque with currently disabled culling are prone to co-planarity issues.
+- Emissive -- hopefully fixed, no animated textures.
+     - [ ] Known cases of nonzero waveHeight for emissive surface? Hopefully not too many.
+
+Basic kinds of water:
+- with waveHeight=0 (dynamically)
+    - remains completely flat, but texture coordinates should be updated "as turbulence"
+        - No need to tesselate? Or turbulence still implies tesselation?
+    - [ ] How do we notice that it will not have waves?
+- with nonzero waveHeight
+    - Should have both waves and turbulence uvs
+    - Needs to be tesselated
+
+- Only worldmodel seems to be generating two-sided water surfaces
+- [ ] then how do other models make water visible from under?
+
+# 2023-11-14 E330
+## EVEN MOAR WATER
+- Culling all water surfaces by `SURF_PLANEBACK` (see E328)
+    - fixes worldmodel coplanarity
+    - breaks test_brush2 sphere: half of the surfaces look inward (red), another set look outward (green)
+        - EXPECTED: everything is green
+        - [-]: try detecting by glpoly normal alignment vs surface alignment
+            - Doesn't really work. Opposite alignment just means that this is a PLANEBACK surface
+    - [x] What works is: leaving only `SURF_UNDERWATER` surfaces. These seem to be directed towards "air" universally,
+        which is what we need exactly.
+- [-] Transparent (and non-worldmodel brush) water surfaces don't seem to have a back side msurface_t. How does GL renderer draw them?
+    - Hypothesis: they are reversed when `EmitWaterPolys()` is called with `reverse = cull_type == CULL_BACKSIDE`
+        - `CULL_BACKSIDE` is based on `camera.origin`, `surf->plane->normal` and `SURF_PLANEBACK`
+
+## How to do trans lucent surfaces
+### Opt. I:
+Have two of them: front and back + backface culling.
+Each side has an explicit flag which one is it: water/glass -> air, or air -> water/glass.
+Shader then can figure out the refraction angle, etc.
+
+### Opt. II:
+Have only a single surface oriented towards air and no backface culling.
+Shader then figures the medium transition direction based on whether it is aligned with the normal.
+Seems to be the preferred option: less geometry overall. Do not need to generate missing "back" surfaces, as only
+worlmodel has them.
+However: glass brushes still do have back surfaces. How to deal with those? Doesn't seem to break anything for now.
+
+# 2023-11-17 E332
+## Automated testing
+Q:
+- How to run? On which hardware?
+    - Steam Deck as a target HW.
+- How to run from GH actions CI?
+- Do we need a headless build? It does require engine changes.
+- How to enable/integrate testing into the build system?
+
+### Unit tests
+Some things can be covered by unit tests. Things that are independent of the engine.
+Currently somewhat covered:
+- alolcator
+- urmom
+
+Possibly coverable:
+- Water tesselation
+- Math stuff (tangents, etc)
+- Parts of light clusters
+- Studio model:
+    - cache
+    - geometry generation
+- sebastian + meatpipe
+- brush loading
+
+Things that potentially coverable, but depend on the engine:
+- Loading patches, mapents, rad files, etc. -- Depend on engine file loading and parsing
+- Texture loading
+- studio model loading
+
+### Regression testing
+Check that:
+- internal structures have expected values. I.e. that all expected entity/material/... patches are applied for a given map:
+    - Internal lists of brush models has expected items.
+    - Each brush model has expected number of surfaces, geometries, water models, etc.
+    - Each brush surface has expected number of vertices (with expected values like position, normal, uvs, ...) expected textures/materials, etc.
+    - There's an expected number of light sources with expected properties (vertices, etc)
+- the desired image is rendered.
+- internal state remains valid/expected during game/demo play
+- performance remains within expected bounds
+
+#### Internal structures verification
+We can make a thing that dumps internal structures we care about into a file. This is done once for a "golden" state.
+This state is now what we need to compare against.
+Then for a test run we do the same thing: we just dump internal state into another file. And then we just `diff -u` this file
+with a golden file. If there are any differences, then it's a failure, and the diff file highlight which things have changed.
+This way there's no immediate need to write a deserialization -- just comparing text files is enough.
+Serialization step is expected to be reasonably simple.
+Possible concerns:
+- Text file should be somewhat structured so that context for found differences is easily reconstructible.
+- Some things are not expected to match exactly. There can be floating point differences, etc.
+- Some things can be order independent. Serializator should have a way to make a stable order for them.
+
+Possible serialization implementation:
+- Similar to R_SPEEDS, provide a way to register structures to be dumped. Pass a function that dumps these structures by `const void*`
+- This function can further pass sub-structures for serialization.
+- Pass array of types/structs for serialization. Possibly with a sort function for stable ordering.
+- Pass basic types for serialization, possibly with precision hints.
+- Pass strings for serialization.
+
+What should be the format? Simple text format is bad when we have arbitrary strings.
+Something json-like (not necessarily valid json) might be good enough.
+
+Updates to code/patches/materials might need changes to the golden state.
+Q: materials are tracked in a different repo, need to have a way to synchronize with golden state.
+We can track golden state also in a different repo, have it link to PBR repo as a submodule (or, better, just a link to a commit).
+And it can itself be a submodule for xash3d-fwgs-rt.
+
+#### Comparing rendering results
+Need to make a screenshot at desired location. Can be the first frame of a playdemo, or just a save file.
+Then need a way to compare images with given error tolerance. OR we can make everything (that we can) completely reproducible.
+E.g. fix all random seeds with known values for testing.
+Should it be a special mode, e.g. run with a save/demo, make a first screenshot and exit?
+Can we do multiple screenshots during a timedemo? Concern here is that it might be not stable enough (e.g. random particles, etc).
+
+#### Validating internal state
+Basically, lots of expensive TESTING-ONLY asserts everywhere.
+Would probably benefit from extensive context collector. `proval.h`
+
+#### Performance tracking
+Release build (i.e. w/o expensive asserts, state validation, dumping or anything) with an ability to dump profiling data.
+Run a short 1-2min timedemo, collect ALL performance stats for the entire lifetime and ALL frames:
+- all memory allocations
+- all custom metrics
+- all cpu and gpu scopes, the entire timeline
+This is then dumped into a file.
+Then there's a piece of software that analyzes these dumps. It can check for a few basic metrics (e.g. frame percentiles,
+amount and count of memory allocations, etc.) and compare them against known bounds. Going way too fast or too slow is a failure.
+The same software could do more analysis, e.g. producing graphs and statistics for all other metrics.

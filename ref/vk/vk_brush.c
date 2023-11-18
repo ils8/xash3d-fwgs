@@ -36,6 +36,14 @@ typedef struct {
 	vk_render_model_t render_model;
 } r_brush_water_model_t;
 
+typedef struct {
+	float texture_width;
+	int vertices_count;
+	int vertices_src_offset;
+	int vertices_dst_offset;
+	int geometry_index;
+} r_conveyor_t;
+
 typedef struct vk_brush_model_s {
 	model_t *engine_model;
 
@@ -52,6 +60,10 @@ typedef struct vk_brush_model_s {
 
 	r_brush_water_model_t water;
 	r_brush_water_model_t water_sides;
+
+	int conveyors_count;
+	r_conveyor_t *conveyors;
+	vk_vertex_t *conveyors_vertices;
 } vk_brush_model_t;
 
 typedef struct {
@@ -64,6 +76,8 @@ typedef struct {
 	int num_surfaces, num_vertices, num_indices;
 	int max_texture_id;
 	int animated_count;
+	int conveyors_count;
+	int conveyors_vertices_count;
 
 	water_model_sizes_t water, side_water;
 } model_sizes_t;
@@ -157,7 +171,7 @@ static const float r_turbsin[] =
 #define TURBSCALE		( 256.0f / ( M_PI2 ))
 
 static void addWarpVertIndCounts(const msurface_t *warp, int *num_vertices, int *num_indices) {
-	for( glpoly_t *p = warp->polys; p; p = p->next ) {
+	for( const glpoly_t *p = warp->polys; p; p = p->next ) {
 		const int triangles = p->numverts - 2;
 		*num_vertices += p->numverts;
 		*num_indices += triangles * 3;
@@ -168,17 +182,54 @@ typedef struct {
 	float prev_time;
 	float wave_height;
 	const msurface_t *warp;
-	qboolean reverse;
 
 	vk_vertex_t *dst_vertices;
 	uint16_t *dst_indices;
 	vk_render_geometry_t *dst_geometry;
 
 	int *out_vertex_count, *out_index_count;
+	qboolean debug;
 } compute_water_polys_t;
+
+#if 0
+static qboolean tesselationHasSameOrientation( const msurface_t *surf, qboolean debug ) {
+	const glpoly_t *poly = surf->polys;
+	ASSERT(poly);
+	ASSERT(poly->numverts > 2);
+
+	const float *v = poly->verts[0];
+	const float *const v0 = poly->verts[0];
+	const float *const v1 = poly->verts[1];
+	const float *const v2 = poly->verts[2];
+
+	vec3_t e0, e1, normal;
+	VectorSubtract( v2, v0, e0 );
+	VectorSubtract( v1, v0, e1 );
+	/* if (surf->flags & SURF_PLANEBACK) */
+	/* 	CrossProduct( e1, e0, normal ); */
+	/* else */
+		CrossProduct( e0, e1, normal );
+
+	// Debug only
+	VectorNormalize(normal);
+	const float dot = DotProduct(normal, surf->plane->normal);
+	const qboolean same = dot > 0;
+
+	if (debug)
+	DEBUG("   surf=%p back=%d plane=(%f, %f, %f), poly=(%f, %f, %f) dot=%f same=%d",
+		surf, !!(surf->flags & SURF_PLANEBACK),
+		surf->plane->normal[0], surf->plane->normal[1], surf->plane->normal[2],
+		normal[0], normal[1], normal[2],
+		dot, same
+	);
+
+	return same;
+}
+#endif
 
 static void brushComputeWaterPolys( compute_water_polys_t args ) {
 	const float time = gpGlobals->time;
+	const qboolean reverse = false;//!tesselationHasSameOrientation( args.warp, args.debug );
 
 #define MAX_WATER_VERTICES 16
 	vk_vertex_t poly_vertices[MAX_WATER_VERTICES];
@@ -193,10 +244,35 @@ static void brushComputeWaterPolys( compute_water_polys_t args ) {
 	int vertices = 0;
 	int indices = 0;
 
-	for( glpoly_t *p = args.warp->polys; p; p = p->next ) {
+	/* 0x18 = 0001 1000 */
+	/* 0x9A = 1001 1010 */
+
+	if (args.debug)
+	DEBUG("W: surf=%p reverse=%d flags=(%08X)%c%c%c%c%c%c%c%c type=%s normal=(%f %f %f)",
+		args.warp, reverse, args.warp->flags,
+		(args.warp->flags & SURF_PLANEBACK) ? 'B' : '.',
+		(args.warp->flags & SURF_DRAWSKY) ? 'S' : '.',
+		(args.warp->flags & SURF_DRAWTURB_QUADS) ? 'Q' : '.',
+		(args.warp->flags & SURF_DRAWTURB) ? 'U' : '.',
+		(args.warp->flags & SURF_DRAWTILED) ? 'T' : '.',
+		(args.warp->flags & SURF_CONVEYOR) ? 'C' : '.',
+		(args.warp->flags & SURF_UNDERWATER) ? 'W' : '.',
+		(args.warp->flags & SURF_TRANSPARENT) ? 'A' : '.',
+		args.warp->plane->type == PLANE_Z ? "Z" :
+			args.warp->plane->type == PLANE_Y ? "Y" :
+			args.warp->plane->type == PLANE_X ? "X" :
+			args.warp->plane->type == PLANE_NONAXIAL ? "N" : "?",
+		args.warp->plane->normal[0],
+		args.warp->plane->normal[1],
+		args.warp->plane->normal[2]
+	);
+
+
+	for( const glpoly_t *p = args.warp->polys; p; p = p->next ) {
 		ASSERT(p->numverts <= MAX_WATER_VERTICES);
+
 		const float *v;
-		if( args.reverse )
+		if( reverse )
 			v = p->verts[0] + ( p->numverts - 1 ) * VERTEXSIZE;
 		else
 			v = p->verts[0];
@@ -246,8 +322,12 @@ static void brushComputeWaterPolys( compute_water_polys_t args ) {
 			poly_vertices[i].normal[1] = 0;
 			poly_vertices[i].normal[2] = 0;
 
+			poly_vertices[i].tangent[0] = 0;
+			poly_vertices[i].tangent[1] = 0;
+			poly_vertices[i].tangent[2] = 0;
+
 			if (i > 1) {
-				vec3_t e0, e1, normal;
+				vec3_t e0, e1, normal, tangent;
 				VectorSubtract( poly_vertices[i - 1].pos, poly_vertices[0].pos, e0 );
 				VectorSubtract( poly_vertices[i].pos, poly_vertices[0].pos, e1 );
 				CrossProduct( e1, e0, normal );
@@ -256,19 +336,53 @@ static void brushComputeWaterPolys( compute_water_polys_t args ) {
 				VectorAdd(normal, poly_vertices[i].normal, poly_vertices[i].normal);
 				VectorAdd(normal, poly_vertices[i - 1].normal, poly_vertices[i - 1].normal);
 
+				computeTangentE(tangent, e0, e1,
+					poly_vertices[0].gl_tc, poly_vertices[i-1].gl_tc, poly_vertices[i].gl_tc);
+
+				VectorAdd(tangent, poly_vertices[0].tangent, poly_vertices[0].tangent);
+				VectorAdd(tangent, poly_vertices[i].tangent, poly_vertices[i].tangent);
+				VectorAdd(tangent, poly_vertices[i - 1].tangent, poly_vertices[i - 1].tangent);
+
 				args.dst_indices[indices++] = (uint16_t)(vertices);
 				args.dst_indices[indices++] = (uint16_t)(vertices + i - 1);
 				args.dst_indices[indices++] = (uint16_t)(vertices + i);
 			}
 
-			if( args.reverse )
+			if( reverse )
 				v -= VERTEXSIZE;
 			else
 				v += VERTEXSIZE;
 		}
 
-		for( int i = 0; i < p->numverts; i++ )
+		for( int i = 0; i < p->numverts; i++ ) {
 			VectorNormalize(poly_vertices[i].normal);
+			VectorNormalize(poly_vertices[i].tangent);
+#if 0
+			//const float dot = DotProduct(poly_vertices[i].normal, args.warp->plane->normal);
+			//if (dot < 0.) {
+			if (poly_vertices[i].normal[2] < 0.f) {
+				Vector4Set(poly_vertices[i].color, 255, 0, 0, 255);
+				poly_vertices[i].pos[0] -= 30.f;
+				poly_vertices[i].prev_pos[0] -= 30.f;
+				poly_vertices[i].pos[2] -= 1.f;
+				poly_vertices[i].prev_pos[2] -= 1.f;
+			} else {
+				Vector4Set(poly_vertices[i].color, 0, 255, 0, 255);
+				poly_vertices[i].pos[0] += 30.f;
+				poly_vertices[i].prev_pos[0] += 30.f;
+				poly_vertices[i].pos[2] += 1.f;
+				poly_vertices[i].prev_pos[2] += 1.f;
+			}
+#endif
+		}
+
+		if (args.debug)
+		DEBUG("  poly numvers=%d flags=%08X normal=(%f %f %f)",
+				p->numverts, p->flags,
+				poly_vertices[0].normal[0],
+				poly_vertices[0].normal[1],
+				poly_vertices[0].normal[2]
+			);
 
 		memcpy(args.dst_vertices + vertices, poly_vertices, sizeof(vk_vertex_t) * p->numverts);
 		vertices += p->numverts;
@@ -371,6 +485,7 @@ typedef struct {
 	r_brush_water_model_t *wmodel;
 	vk_render_geometry_t *geometries;
 	float prev_time;
+	qboolean debug;
 } fill_water_surfaces_args_t;
 
 static void fillWaterSurfaces( fill_water_surfaces_args_t args ) {
@@ -386,14 +501,10 @@ static void fillWaterSurfaces( fill_water_surfaces_args_t args ) {
 		const int surf_index = args.wmodel->surfaces_indices[i];
 		const msurface_t *warp = args.surfaces + surf_index;
 
-		/* if( warp->plane->type != PLANE_Z && !FBitSet( ent->curstate.effects, EF_WATERSIDES )) */
-		/* 	continue; */
-
 		int vertices = 0, indices = 0;
 		brushComputeWaterPolys((compute_water_polys_t){
 			.prev_time = args.prev_time,
 			.wave_height = wave_height,
-			.reverse = false, // ??? is it ever true?
 			.warp = warp,
 
 			.dst_vertices = geom_lock.vertices + vertices_offset,
@@ -402,6 +513,7 @@ static void fillWaterSurfaces( fill_water_surfaces_args_t args ) {
 
 			.out_vertex_count = &vertices,
 			.out_index_count = &indices,
+			.debug = args.debug,
 		});
 
 		args.geometries[i].vertex_offset = args.wmodel->geometry.vertices.unit_offset + vertices_offset;
@@ -461,6 +573,7 @@ typedef enum {
 	BrushSurface_Water,
 	BrushSurface_WaterSide,
 	BrushSurface_Sky,
+	BrushSurface_Conveyor,
 } brush_surface_type_e;
 
 static brush_surface_type_e getSurfaceType( const msurface_t *surf, int i, qboolean is_worldmodel ) {
@@ -486,18 +599,35 @@ static brush_surface_type_e getSurfaceType( const msurface_t *surf, int i, qbool
 		return BrushSurface_Hidden;
 
 	if (surf->flags & (SURF_DRAWTURB | SURF_DRAWTURB_QUADS)) {
-		return (!surf->polys) ? BrushSurface_Hidden :
-			// Worldmodel doesn't distinguish between !=PLANE_Z sides and not sides
-			(is_worldmodel || surf->plane->type == PLANE_Z) ? BrushSurface_Water : BrushSurface_WaterSide;
+		if (!surf->polys)
+			return BrushSurface_Hidden;
+
+		// Water surfaces come in pairs: regular front and the opposite back
+		// This makes ray tracing unhappy as there are coplanar surfaces.
+		// We'd want to turn of the back surface, but SURF_PLANEBACK is not really congruent with
+		// the logical direction of the surface, it just means that glpolys have been produced in
+		// an opposite winding order.
+		// SURF_UNDERWATER seems to be the right flag: it does seem to signal that the surface is
+		// lookint "out" from the water, directed towards "air".
+		if (surf->flags & SURF_UNDERWATER)
+			return BrushSurface_Hidden;
+		//}
+
+		// Worldmodel doesn't distinguish between !=PLANE_Z sides and not sides.
+		// All water surfaces should be present for worldmodel
+		return (is_worldmodel || surf->plane->type == PLANE_Z) ? BrushSurface_Water : BrushSurface_WaterSide;
 	}
 
 	// Explicitly enable SURF_SKY, otherwise they will be skipped by SURF_DRAWTILED
 	if( FBitSet( surf->flags, SURF_DRAWSKY ))
 		return BrushSurface_Sky;
 
+	if( surf->flags & SURF_CONVEYOR ) {
+		return BrushSurface_Conveyor;
+	}
+
 	//if( surf->flags & ( SURF_DRAWSKY | SURF_DRAWTURB | SURF_CONVEYOR | SURF_DRAWTURB_QUADS ) ) {
 	if( surf->flags & ( SURF_DRAWTURB | SURF_DRAWTURB_QUADS ) ) {
-	//if( surf->flags & ( SURF_DRAWSKY | SURF_CONVEYOR ) ) {
 		// FIXME don't print this on second sort-by-texture pass
 		//DEBUG("Skipping surface %d because of flags %08x", i, surf->flags);
 		return BrushSurface_Hidden;
@@ -551,6 +681,7 @@ static qboolean brushCreateWaterModel(const model_t *mod, r_brush_water_model_t 
 		.wmodel = wmodel,
 		.geometries = geometries,
 		.prev_time = 0.f,
+		.debug = true,
 	});
 
 	if (!R_RenderModelCreate(&wmodel->render_model, (vk_render_model_init_t){
@@ -603,6 +734,7 @@ static void brushDrawWater(r_brush_water_model_t *wmodel, const cl_entity_t *ent
 		.wmodel = wmodel,
 		.geometries = wmodel->render_model.geometries,
 		.prev_time = prev_time,
+		.debug = false,
 	});
 
 	if (!R_RenderModelUpdate(&wmodel->render_model)) {
@@ -621,16 +753,12 @@ static void brushDrawWater(r_brush_water_model_t *wmodel, const cl_entity_t *ent
 	APROF_SCOPE_END(brush_draw_water);
 }
 
-#if 0
-// TODO use this
-static void computeConveyorSpeed(const color24 rendercolor, int tex_index, vec2_t speed) {
+static void computeConveyorOffset(const color24 rendercolor, float tex_width, float time, vec2_t out_offset) {
 	float sy, cy;
 	float flConveyorSpeed = 0.0f;
 	float flRate, flAngle;
-	vk_texture_t *texture = R_TextureGetByIndex( tex_index );
-	//gl_texture_t	*texture;
 
-	// FIXME
+	// TODO
 	/* if( ENGINE_GET_PARM( PARM_QUAKE_COMPATIBLE ) && RI.currententity == gEngfuncs.GetEntityByIndex( 0 ) ) */
 	/* { */
 	/* 	// same as doom speed */
@@ -641,16 +769,23 @@ static void computeConveyorSpeed(const color24 rendercolor, int tex_index, vec2_
 		flConveyorSpeed = (rendercolor.g<<8|rendercolor.b) / 16.0f;
 		if( rendercolor.r ) flConveyorSpeed = -flConveyorSpeed;
 	}
-	//texture = R_GetTexture( glState.currentTextures[glState.activeTMU] );
 
-	flRate = fabs( flConveyorSpeed ) / (float)texture->width;
+	flRate = fabs( flConveyorSpeed ) / tex_width;
 	flAngle = ( flConveyorSpeed >= 0 ) ? 180 : 0;
 
+	// TODO no SinCos, no
 	SinCos( flAngle * ( M_PI_F / 180.0f ), &sy, &cy );
-	speed[0] = cy * flRate;
-	speed[1] = sy * flRate;
+	out_offset[0] = cy * flRate * time;
+	out_offset[1] = sy * flRate * time;
+
+	// make sure that we are positive
+	if( out_offset[0] < 0.0f ) out_offset[0] += 1.0f + -(int)out_offset[0];
+	if( out_offset[1] < 0.0f ) out_offset[1] += 1.0f + -(int)out_offset[1];
+
+	// make sure that we are in a [0,1] range
+	out_offset[0] = out_offset[0] - (int)out_offset[0];
+	out_offset[1] = out_offset[1] - (int)out_offset[1];
 }
-#endif
 
 /*
 ===============
@@ -771,7 +906,6 @@ void R_BrushModelDraw( const cl_entity_t *ent, int render_mode, float blend, con
 		brushDrawWater(&bmodel->water_sides, ent, bmodel->engine_model->surfaces, render_type, color, transform, bmodel->prev_transform, bmodel->prev_time);
 	}
 
-
 	++g_brush.stat.models_drawn;
 
 	if (bmodel->render_model.num_geometries == 0)
@@ -817,6 +951,28 @@ void R_BrushModelDraw( const cl_entity_t *ent, int render_mode, float blend, con
 		APROF_SCOPE_END(brush_update_textures);
 	}
 
+	// Move conveyors
+	for (int i = 0; i < bmodel->conveyors_count; ++i) {
+		const r_conveyor_t *const conv = bmodel->conveyors + i;
+		vec2_t offset = {0, 0};
+		computeConveyorOffset(ent->curstate.rendercolor, conv->texture_width, gpGlobals->time, offset);
+
+		ASSERT(conv->geometry_index >= 0);
+		ASSERT(conv->geometry_index < bmodel->render_model.num_geometries);
+		const vk_render_geometry_t *const geom = bmodel->render_model.geometries + conv->geometry_index;
+		const r_geometry_range_lock_t lock = R_GeometryRangeLockSubrange(&bmodel->geometry, conv->vertices_dst_offset, conv->vertices_count);
+
+		for (int j = 0; j < conv->vertices_count; ++j) {
+			const vk_vertex_t *const src = bmodel->conveyors_vertices + conv->vertices_src_offset + j;
+			vk_vertex_t *const dst = lock.vertices + j;
+			*dst = *src;
+			dst->gl_tc[0] = src->gl_tc[0] + offset[0];
+			dst->gl_tc[1] = src->gl_tc[1] + offset[1];
+		}
+
+		R_GeometryRangeUnlock(&lock);
+	}
+
 	const material_mode_e material_mode = brushMaterialModeForRenderType(render_type);
 	R_RenderModelDraw(&bmodel->render_model, (r_model_draw_t){
 		.render_type = render_type,
@@ -856,6 +1012,11 @@ static model_sizes_t computeSizes( const model_t *mod, qboolean is_worldmodel ) 
 
 		case BrushSurface_Animated:
 			sizes.animated_count++;
+			break;
+		case BrushSurface_Conveyor:
+			sizes.conveyors_count++;
+			sizes.conveyors_vertices_count += surf->numedges;
+			break;
 		case BrushSurface_Regular:
 		case BrushSurface_Sky:
 			break;
@@ -869,9 +1030,10 @@ static model_sizes_t computeSizes( const model_t *mod, qboolean is_worldmodel ) 
 	DEBUG("Computed sizes for brush model \"%s\":", mod->name);
 	DEBUG("  num_surfaces=%d animated_count=%d num_vertices=%d num_indices=%d max_texture_id=%d",
 		sizes.num_surfaces, sizes.animated_count, sizes.num_vertices, sizes.num_indices, sizes.max_texture_id);
+	DEBUG("  conveyors_count=%d conveyors_vertices_count=%d",
+		sizes.conveyors_count, sizes.conveyors_vertices_count);
 	DEBUG("  water_surfaces=%d water_vertices=%d water_indices=%d",
 		sizes.water.surfaces, sizes.water.vertices, sizes.water.indices);
-
 	DEBUG("  side_water_surfaces=%d side_water_vertices=%d side_water_indices=%d",
 		sizes.side_water.surfaces, sizes.side_water.vertices, sizes.side_water.indices);
 
@@ -1132,6 +1294,8 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 	int vertex_offset = 0;
 	int num_geometries = 0;
 	int animated_count = 0;
+	int conveyors_count = 0;
+	int conveyors_vertices_count = 0;
 
 	vk_vertex_t *p_vert = args.out_vertices;
 	uint16_t *p_ind = args.out_indices;
@@ -1139,7 +1303,6 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 
 	const xvk_mapent_func_any_t *const entity_patch = getModelFuncAnyPatch(args.mod);
 	connectVertices(args.mod, entity_patch ? entity_patch->smooth_entire_model : false);
-
 
 	// Load sorted by gl_texturenum
 	// TODO this does not make that much sense in vulkan (can sort later)
@@ -1169,12 +1332,33 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 				continue;
 			case BrushSurface_Animated:
 				args.bmodel->animated_indexes[animated_count++] = num_geometries;
+				break;
+			case BrushSurface_Conveyor:
+				break;
 			case BrushSurface_Regular:
 			case BrushSurface_Sky:
 				break;
 			}
 
 			args.bmodel->surface_to_geometry_index[i] = num_geometries;
+
+			// Fill conveyor data if conveyor
+			r_conveyor_t *conv = NULL;
+			if (type == BrushSurface_Conveyor) {
+				ASSERT(conveyors_count < args.sizes.conveyors_count);
+				conv = &args.bmodel->conveyors[conveyors_count++];
+
+				conv->vertices_count = surf->numedges;
+
+				conv->vertices_dst_offset = vertex_offset;
+				conv->vertices_src_offset = conveyors_vertices_count;
+				conveyors_vertices_count += conv->vertices_count;
+				ASSERT(conveyors_vertices_count <= args.sizes.conveyors_vertices_count);
+
+				conv->geometry_index = num_geometries;
+
+				conv->texture_width = R_TexturesGetParm(PARM_TEX_WIDTH, orig_tex_id);
+			}
 
 			++num_geometries;
 
@@ -1236,12 +1420,9 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 				VK_CreateSurfaceLightmap( surf, args.mod );
 			}
 
-			if (FBitSet( surf->flags, SURF_CONVEYOR )) {
-				// FIXME make an explicit list of dynamic-uv geometries
-			}
-
 			vec3_t surf_normal;
 			getSurfaceNormal(surf, surf_normal);
+
 
 			vk_vertex_t *const pvert_begin = p_vert;
 			for( int k = 0; k < surf->numedges; k++ )
@@ -1324,6 +1505,13 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 
 				Vector4Set(vertex.color, 255, 255, 255, 255);
 
+				// Store original vertex data for conveyor reasons
+				if (conv) {
+					const int vertex_index = conv->vertices_src_offset + k;
+					ASSERT(vertex_index < args.sizes.conveyors_vertices_count);
+					args.bmodel->conveyors_vertices[vertex_index] = vertex;
+				}
+
 				*(p_vert++) = vertex;
 
 				// Ray tracing apparently expects triangle list only (although spec is not very clear about this kekw)
@@ -1343,6 +1531,8 @@ static qboolean fillBrushSurfaces(fill_geometries_args_t args) {
 
 	ASSERT(args.sizes.num_surfaces == num_geometries);
 	ASSERT(args.sizes.animated_count == animated_count);
+	ASSERT(args.sizes.conveyors_count == conveyors_count);
+	ASSERT(args.sizes.conveyors_vertices_count == conveyors_vertices_count);
 	return true;
 }
 
@@ -1355,11 +1545,20 @@ static qboolean createRenderModel( const model_t *mod, vk_brush_model_t *bmodel,
 
 	vk_render_geometry_t *const geometries = Mem_Malloc(vk_core.pool, sizeof(vk_render_geometry_t) * sizes.num_surfaces);
 	bmodel->surface_to_geometry_index = Mem_Malloc(vk_core.pool, sizeof(int) * mod->nummodelsurfaces);
+	for (int i = 0; i < mod->nummodelsurfaces; ++i)
+		bmodel->surface_to_geometry_index[i] = -1;
 	bmodel->animated_indexes = Mem_Malloc(vk_core.pool, sizeof(int) * sizes.animated_count);
 	bmodel->animated_indexes_count = sizes.animated_count;
 
 	if (sizes.animated_count > MAX_ANIMATED_TEXTURES) {
 		WARN("Too many animated textures %d for model \"%s\" some surfaces can be static", sizes.animated_count, mod->name);
+	}
+
+	if (sizes.conveyors_count > 0) {
+		ASSERT(sizes.conveyors_vertices_count > 3);
+		bmodel->conveyors_count = sizes.conveyors_count;
+		bmodel->conveyors_vertices = Mem_Malloc(vk_core.pool, sizeof(vk_vertex_t) * sizes.conveyors_vertices_count);
+		bmodel->conveyors = Mem_Malloc(vk_core.pool, sizeof(r_conveyor_t) * sizes.conveyors_count);
 	}
 
 	const r_geometry_range_lock_t geom_lock = R_GeometryRangeLock(&bmodel->geometry);
@@ -1461,6 +1660,12 @@ static void R_BrushModelDestroy( vk_brush_model_t *bmodel ) {
 	ASSERT(bmodel->engine_model->cache.data == bmodel);
 	ASSERT(bmodel->engine_model->type == mod_brush);
 
+	if (bmodel->conveyors_vertices)
+		Mem_Free(bmodel->conveyors_vertices);
+
+	if (bmodel->conveyors)
+		Mem_Free(bmodel->conveyors);
+
 	if (bmodel->water.surfaces_count) {
 		R_RenderModelDestroy(&bmodel->water.render_model);
 		Mem_Free((int*)bmodel->water.surfaces_indices);
@@ -1539,6 +1744,7 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 		int surface_index;
 		const msurface_t *surf;
 		vec3_t emissive;
+		qboolean is_water;
 	} emissive_surface_t;
 	emissive_surface_t emissive_surfaces[MAX_SURFACE_LIGHTS];
 	int geom_indices[MAX_SURFACE_LIGHTS];
@@ -1548,10 +1754,13 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 	for( int i = 0; i < mod->nummodelsurfaces; ++i) {
 		const int surface_index = mod->firstmodelsurface + i;
 		const msurface_t *surf = mod->surfaces + surface_index;
+		const brush_surface_type_e type = getSurfaceType(surf, surface_index, is_worldmodel);
 
-		switch (getSurfaceType(surf, surface_index, is_worldmodel)) {
+		switch (type) {
 		case BrushSurface_Regular:
 		case BrushSurface_Animated:
+		case BrushSurface_Water:
+		// No known cases, also needs to be dynamic case BrushSurface_WaterSide:
 			break;
 		default:
 			continue;
@@ -1581,10 +1790,12 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 		surface->model_surface_index = i;
 		surface->surface_index = surface_index;
 		surface->surf = surf;
+		surface->is_water = type == BrushSurface_Water;
 		VectorCopy(emissive, surface->emissive);
 	}
 
 	// Clear old per-geometry emissive values. The new emissive values will be assigned by the loop below only to the relevant geoms
+	// This is relevant for updating lights during development
 	for (int i = 0; i < bmodel->render_model.num_geometries; ++i) {
 		vk_render_geometry_t *const geom = bmodel->render_model.geometries + i;
 		VectorClear(geom->emissive);
@@ -1599,6 +1810,7 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 	}
 
 	// Apply all emissive surfaces found
+	int geom_indices_count = 0;
 	for (int i = 0; i < emissive_surfaces_count; ++i) {
 		const emissive_surface_t* const s = emissive_surfaces + i;
 
@@ -1619,14 +1831,36 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 		// Non-static ones will be applied later when the model is actually rendered
 		if (is_static) {
 			RT_LightAddPolygon(&polylight);
+
+			/* TODO figure out when this is needed.
+			 * This is needed in cases where we can dive into emissive acid, which should illuminate what's under it
+			 * Likely, this is not a correct fix, though, see https://github.com/w23/xash3d-fwgs/issues/56
+			if (s->is_water) {
+				// Add backside for water
+				for (int i = 0; i < polylight.num_vertices; ++i) {
+					vec3_t tmp;
+					VectorCopy(polylight.vertices[i], tmp);
+					VectorCopy(polylight.vertices[polylight.num_vertices-1-i], polylight.vertices[i]);
+					VectorCopy(tmp, polylight.vertices[polylight.num_vertices-1-i]);
+					RT_LightAddPolygon(&polylight);
+				}
+			}
+			*/
 		} else {
 			bmodel->render_model.dynamic_polylights[i] = polylight;
 		}
 
 		// Assign the emissive value to the right geometry
-		const int geom_index = bmodel->surface_to_geometry_index[s->model_surface_index];
-		geom_indices[i] = geom_index;
-		VectorCopy(polylight.emissive, bmodel->render_model.geometries[geom_index].emissive);
+		if (bmodel->surface_to_geometry_index) { // Can be absent for water-only models
+			const int geom_index = bmodel->surface_to_geometry_index[s->model_surface_index];
+			if (geom_index != -1) { // can be missing for water surfaces
+				ASSERT(geom_index >= 0);
+				ASSERT(geom_index < bmodel->render_model.num_geometries);
+				ASSERT(geom_indices_count < COUNTOF(geom_indices));
+				geom_indices[geom_indices_count++] = geom_index;
+				VectorCopy(polylight.emissive, bmodel->render_model.geometries[geom_index].emissive);
+			}
+		}
 	}
 
 	if (emissive_surfaces_count > 0) {
@@ -1644,7 +1878,7 @@ void R_VkBrushModelCollectEmissiveSurfaces( const struct model_s *mod, qboolean 
 			R_VkStagingFlushSync();
 		}
 
-		R_RenderModelUpdateMaterials(&bmodel->render_model, geom_indices, emissive_surfaces_count);
+		R_RenderModelUpdateMaterials(&bmodel->render_model, geom_indices, geom_indices_count);
 		INFO("Loaded %d polylights for %s model %s", emissive_surfaces_count, is_static ? "static" : "movable", mod->name);
 	}
 }
