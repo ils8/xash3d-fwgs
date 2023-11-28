@@ -10,6 +10,48 @@
 //
 // dirt: mmap scope, events, frame fence to ram, then, when >50mb to disk
 
+// BENEVOLENT DICTATOR DICTATED:
+//
+// 1.sren'k to mem
+//	1.1 
+//		collect state + frame + events
+//		1.1.1 
+//					v a_tr_beg(maxsz)
+//					buffer of max and a buf start flag
+//	1.2 
+//		push to bit struct
+//		if flag - memcpy to end of buf (overflow ^^ + cycle?)
+//	1.3 
+//		sren'k to addr in mem
+//		memcpy all the things!
+//
+// 2.sren'k to disk
+//	2.1 
+//		collect 1.3 and sren'k to file
+//		2.1.1 
+//			v a_tr_end_dump(filename)
+//			2.1.1.1 
+//				a. flag = 0, fwrite
+//				2.1.1.1.1 
+//					(struct mag,
+//									s_c,
+//									n_l,
+//									n[l],
+//									f_c,
+//									t,
+//									e_c,
+//									e[ec],
+//									fr[fr_c]
+//					)
+//
+// 3.read and anal data
+//	3.1gosha to the rescue!
+//	3.2	fr_dt[frc]
+//			s_dt[sc]
+//	3.3 avg_med_stdev_mean_etc... and %% fr + s
+//	3.4 sum over scopes
+//  3.5 ADD CONSOLE STUFF NOW!
+
 
 #define APROF_SCOPE_DECLARE(scope) \
 	static aprof_scope_id_t _aprof_scope_id_##scope = -1
@@ -110,10 +152,10 @@ typedef uint64_t aprof_event_t;
 typedef struct {
 	uint64_t time_begin_ns;
 
-	aprof_scope_t scopes[APROF_MAX_SCOPES];
+	aprof_scope_t scopes[APROF_MAX_SCOPES]; // 2^8 scopes...
 	int num_scopes;
 
-	aprof_event_t events[APROF_EVENT_BUFFER_SIZE];
+	aprof_event_t events[APROF_EVENT_BUFFER_SIZE]; // 2^20 events...
 	uint32_t events_write;
 	uint32_t events_last_frame;
 
@@ -154,7 +196,7 @@ uint64_t aprof_time_platform_to_ns( uint64_t platform_time ) {
 aprof_state_t g_aprof = {0};
 
 
-
+// provod said mmap blocks... wut to do?
 // state = events + scopes, where is frame stuff?
 int dump_to_ram(aprof_state_t *state){
 	for(int i=state->num_scopes; i; --i){
@@ -193,15 +235,22 @@ int dump_to_ram(aprof_state_t *state){
 						size_t length
 	);
 	*/	
-#include <stdio.h>
 
-    FILE *dt_file = fopen("states", "a");
-    if(dt_file == NULL)
-      printf("error: couldn't open states\n");
-    else
-      fprintf(dt_file, "%s\n", state->scopes[i].name);
-    fclose(dt_file);
-    // end of dirt
+		FILE *state_frame_dd;
+		state_frame_fd = fopen("./state_frame", "a+");
+		mmap(0, state->num_scopes, sizeof(g_aprof), PROT_READ | PROT_WRITE, MAP_32BIT);
+
+		{
+			#include <stdio.h>
+
+    	FILE *dt_file = fopen("states", "a");
+    	if(dt_file == NULL)
+    	  printf("error: couldn't open states\n");
+    	else
+    	  fprintf(dt_file, "%s\n", state->scopes[i].name);
+    	fclose(dt_file);
+    	// end of dirt
+		}
 	}
 
 	return 0;
