@@ -115,7 +115,7 @@ typedef struct {
 	uint32_t flags;
 	const char *source_file;
 	int source_line;
-} /* dirt: need this thing */ aprof_scope_t;
+} aprof_scope_t;
 
 #define APROF_MAX_SCOPES 256
 
@@ -141,8 +141,9 @@ enum {
 	APROF_EVENT_FRAME_BOUNDARY = 0,
 
 	APROF_EVENT_SCOPE_BEGIN = 1,
-	APROF_EVENT_SCOPE_END = 2,
+	APROF_EVENT_SCOPE_END = 2
 };
+
 
 // MUST be power of 2
 #define APROF_EVENT_BUFFER_SIZE (1<<20) // 1000 0000 0000 0000 0000  0x80000 1*2^20 == 1024*1024
@@ -163,7 +164,7 @@ typedef struct {
 	int current_frame_wraparounds;
 
 	// TODO event log for chrome://trace (or similar) export and analysis
-} /* dirt: need this */aprof_state_t;
+} aprof_state_t;
 
 extern aprof_state_t g_aprof;
 
@@ -176,6 +177,7 @@ uint64_t aprof_time_now_ns( void ) {
 	clock_gettime(CLOCK_MONOTONIC, &tp);
 	return tp.tv_nsec + tp.tv_sec * 1000000000ull;
 }
+/*
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define WIN32_EXTRA_LEAN
@@ -190,17 +192,23 @@ uint64_t aprof_time_now_ns( void ) {
 uint64_t aprof_time_platform_to_ns( uint64_t platform_time ) {
 	return platform_time * 1000000000ull / _aprof_frequency.QuadPart - g_aprof.time_begin_ns;
 }
+*/
 #else
 #error aprof is not implemented for this os
+
+
 #endif
+
 
 aprof_state_t g_aprof = {0};
 
+/*
 #if defined(_WIN32)
 	if (_aprof_frequency.QuadPart == 0)
 		QueryPerformanceFrequency(&_aprof_frequency);
 #endif
-
+*/
+aprof_scope_id_t aprof_scope_init(const char *scope_name, uint32_t flags, const char *source_file, int source_line){
 	if (!g_aprof.time_begin_ns)
 		g_aprof.time_begin_ns = aprof_time_now_ns();
 
@@ -213,7 +221,7 @@ aprof_state_t g_aprof = {0};
 	g_aprof.scopes[g_aprof.num_scopes].source_line = source_line;
 
 	++g_aprof.num_scopes;
-	dump_to_ram(&g_aprof);
+	//dump_to_ram(&g_aprof);
 
 	return g_aprof.num_scopes; // dirt: atomic?
 }
