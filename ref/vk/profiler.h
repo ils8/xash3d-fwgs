@@ -33,7 +33,8 @@
 //			2.1.1.1 
 //				a. flag = 0, fwrite
 //				2.1.1.1.1 
-//					(struct mag,
+//					(struct fr[frc]
+//									mag,
 //									s_c,
 //									n_l,
 //									n[l],
@@ -195,75 +196,6 @@ uint64_t aprof_time_platform_to_ns( uint64_t platform_time ) {
 
 aprof_state_t g_aprof = {0};
 
-
-// provod said mmap blocks... wut to do?
-// state = events + scopes, where is frame stuff?
-int dump_to_ram(aprof_state_t *state){
-	for(int i=state->num_scopes; i; --i){
-		// addr starting address of mapping
-		// len length of the mapping >0
-		// if addr == 0, page-aligned address by kernel
-		// else addr+= len to boundary
-		// mmap returns address
-		// offset - into the fd
-		// offset % sysconf(_SC_PAGE_SIZE) = 0
-		// can close fd right after return mmap
-		// 
-		
-	//	void *mmap(
-				/* new mapping, if 0 os assign */	//void addr[.length],
-				/* len of mapping >0! */					//size_t len, 
-				/* mem condoms */									//int prot,
-				/* rwen */												//int flags, 
-				/* object to map from */					//int fd,
-				/* offset into above object */		//off_t offset
-	//	);
-		
-		/*
-		 * delete mappings for addr len
-		 * refs SIGSEGV!!
-		 * also called at process deth
-		 * fd doesnt close lol
-		 * addr % page_size = 0!
-		 * ok to call on random address
-		 * succ return 0
-		 * err return -1
-		 */
-	/*
-	int munmap(
-				 		void addr[.length],
-						size_t length
-	);
-	*/	
-
-		FILE *state_frame_dd;
-		state_frame_fd = fopen("./state_frame", "a+");
-		mmap(0, state->num_scopes, sizeof(g_aprof), PROT_READ | PROT_WRITE, MAP_32BIT);
-
-		{
-			#include <stdio.h>
-
-    	FILE *dt_file = fopen("states", "a");
-    	if(dt_file == NULL)
-    	  printf("error: couldn't open states\n");
-    	else
-    	  fprintf(dt_file, "%s\n", state->scopes[i].name);
-    	fclose(dt_file);
-    	// end of dirt
-		}
-	}
-
-	return 0;
-}
-
-int dump_to_disk(void){
-
-	return 0;
-}
-
-
-
-aprof_scope_id_t aprof_scope_init(const char *scope_name, uint32_t flags, const char *source_file, int source_line) {
 #if defined(_WIN32)
 	if (_aprof_frequency.QuadPart == 0)
 		QueryPerformanceFrequency(&_aprof_frequency);

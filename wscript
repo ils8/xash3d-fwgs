@@ -7,7 +7,7 @@ from waflib.Tools import waf_unit_test
 import sys
 import os
 
-VERSION = '0.99'
+VERSION = '0.99' #:durka:
 APPNAME = 'xash3d-fwgs'
 top = '.'
 default_prefix = '/' # Waf uses it to set default prefix
@@ -19,7 +19,7 @@ class Subproject:
 		self.name = name
 		self.fnFilter = fnFilter
 
-	def is_exists(self, ctx):
+	def is_exists(self, ctx): # есть_существует, пиздец
 		return ctx.path.find_node(self.name + '/wscript')
 
 	def is_enabled(self, ctx):
@@ -327,7 +327,7 @@ def configure(conf):
 			# disabled, flood
 			# '-Wdouble-promotion',
 
-            #dunno if this is gcc tho..., add dwarf and extra info (needed for macro expansion, as provod did some MAD ones in profiler.h)
+            # dirt: dunno if this is gcc tho..., add dwarf and extra info (needed for macro expansion, as provod did some MAD ones in profiler.h)
             '-g3',      # macro exp
             '-gdwarf',  # in dwarf format
 		]

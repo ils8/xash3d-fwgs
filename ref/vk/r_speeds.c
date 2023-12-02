@@ -166,12 +166,16 @@ static void drawTimeBar(uint64_t begin_time_ns, float time_scale_ms, int64_t beg
 	const int glyph_width = g_speeds.font_metrics.glyph_width;
 	Q_snprintf(tmp, Q_min(sizeof(tmp), width / glyph_width), "%s %.3fms", label, delta_ms);
 	// dirt: dump dt to .perf
-	FILE *dt_file = fopen("./dt_dump", "a");
-	if(dt_file == NULL)
-		printf("error: couldn't open dt_dump\n");
-	else
-		fprintf(dt_file, "%.3f\n", delta_ms);
-	fclose(dt_file);
+	{
+		//	#include <stdio.h>
+	    FILE *dt_file = fopen("./dt_dump.perf", "a");
+	    if(dt_file == NULL)
+	    	printf("error: couldn't open dt_dump.perf\n");
+	    else
+	    	fprintf(dt_file, "%.3f\n", delta_ms);
+	    fclose(dt_file);
+	}
+	// end of dirt
 	gEngine.Con_DrawString(x, y, tmp, text_color);
 }
 
@@ -210,6 +214,14 @@ static void drawCPUProfilerScopes(int draw, const aprof_event_t *events, uint64_
 						max_depth = depth;
 
 					const aprof_scope_t *const scope = g_aprof.scopes + scope_id;
+					// dirt: fprint scope names...
+					FILE *sc_n_f = fopen("scope_names", "a");
+					if( sc_n_f == NULL)
+						printf("nahui idi\n");
+					else
+						fprintf(sc_n_f, "%s\n", scope->name);
+					fclose(sc_n_f);
+
 					if (scope->flags & APROF_SCOPE_FLAG_WAIT)
 						under_waiting++;
 

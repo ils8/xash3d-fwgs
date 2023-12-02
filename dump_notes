@@ -27,3 +27,13 @@ js canvas! yay Kappa
 gpu is unknown territory vk_framectl 
 id say better have modules (decentralise woot)
 before display more dump
+
+#plan
+collect
+ - state
+	- events
+	- scope
+ - frame
+dump to ram
+ - collected above (if >50mb to disk or request/end/abrupt end)
+

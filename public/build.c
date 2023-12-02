@@ -212,6 +212,11 @@ const char *Q_ArchitectureStringByID( const int arch, const uint abi, const int 
 	return is64 ?
 		( endianness == ENDIANNESS_LITTLE ? "unknown64el" : "unknownel" ) :
 		( endianness == ENDIANNESS_LITTLE ? "unknown64be" : "unknownbe" );
+	// add an error message if !2^6 bit arch...
+	{
+		#include <stdio.h>
+		printf("AYAYAYYA %s\n", is64 ? "2^6!" : "2^5 :weak:");
+	}
 }
 
 /*
