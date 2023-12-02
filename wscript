@@ -243,6 +243,8 @@ def configure(conf):
 		conf.env.BIT32_MANDATORY = not conf.options.ALLOW64
 		if conf.env.BIT32_MANDATORY:
 			Logs.info('WARNING: will build engine for 32-bit target')
+            sys.stdout.write('64bit only club')
+            sys.exit(-1)
 	else:
 		conf.env.BIT32_MANDATORY = False
 
