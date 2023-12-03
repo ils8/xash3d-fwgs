@@ -41,6 +41,8 @@
 #include <string.h>
 #include <errno.h>
 
+
+
 #define NULLINST_FUNCS(X) \
 	X(vkEnumerateInstanceVersion) \
 	X(vkCreateInstance) \
@@ -316,6 +318,10 @@ static int enumerateDevices( vk_available_device_t **available_devices ) {
 	VkPhysicalDevice *physical_devices = NULL;
 	uint32_t num_physical_devices = 0;
 	vk_available_device_t *this_device = NULL;
+
+#if !defined XASH_64BIT
+	gEngine.Con_Reportf(S_ERROR "32bit build is not supported in raytracing extensions\n");
+#endif
 
 	XVK_CHECK(vkEnumeratePhysicalDevices(vk_core.instance, &num_physical_devices, physical_devices));
 	physical_devices = Mem_Malloc(vk_core.pool, sizeof(VkPhysicalDevice) * num_physical_devices);
